@@ -36,13 +36,12 @@ async function startOrderConsumer() {
         console.log("IO VAR", order.userId);
         const roomId = order.userId; // Kullanıcının benzersiz bir kimliği varsa, odayı kullanıcı kimliğiyle belirleyin
 
-        // İlk odaya mesaj gönderme
+        // Sadece siparişi veren müşteriye mesaj gönderme
         io.to(roomId).emit("updateOrderStatus", {
           orderId: order.id,
           status: "completed",
         });
 
-        // İkinci odaya mesaj gönderme
         io.to("room2").emit("updateOrderStatus", {
           orderId: order.id,
           status: "completed",
@@ -65,8 +64,18 @@ async function startOrderConsumer() {
 io.on("connection", (socket) => {
   console.log("Bir kullanıcı bağlandı.");
 
+  socket.on("joinRoom", (roomId) => {
+    socket.join(roomId);
+    console.log(`Kullanıcı ${roomId} odasına katıldı.`);
+  });
+
   socket.on("disconnect", () => {
     console.log("Bir kullanıcı bağlantısını kopardı.");
+  });
+
+  socket.on("updateOrderStatus", ({ roomId, status }) => {
+    console.log(`Sipariş durumu güncellendi: ${status}`);
+    io.to(roomId).emit("orderStatusUpdated", { status });
   });
 });
 
