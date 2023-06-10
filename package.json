@@ -12,8 +12,11 @@
   "license": "ISC",
   "dependencies": {
     "amqplib": "^0.10.3",
+    "axios": "^1.4.0",
+    "dotenv": "^16.1.4",
     "express": "^4.18.2",
     "nodemon": "^2.0.22",
+    "pg": "^8.11.0",
     "socket.io": "^4.6.2"
   }
 }

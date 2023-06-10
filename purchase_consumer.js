@@ -1,8 +1,7 @@
-const { Console } = require("console");
 const express = require("express");
 const http = require("http");
 const socketIO = require("socket.io");
-
+const dotenv = require("dotenv");
 const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, {
@@ -13,6 +12,8 @@ const io = socketIO(server, {
 });
 
 let channel; // AMQP channel
+
+dotenv.config();
 
 async function startOrderConsumer() {
   try {
@@ -32,12 +33,19 @@ async function startOrderConsumer() {
       // Siparişin işlenmesiyle ilgili diğer işlemleri burada gerçekleştirin...
 
       if (io) {
-        console.log("İO VARRRR ", order.userId);
+        console.log("IO VAR", order.userId);
         const roomId = order.userId; // Kullanıcının benzersiz bir kimliği varsa, odayı kullanıcı kimliğiyle belirleyin
-        io.emit("updateOrderStatus", {
+
+        // İlk odaya mesaj gönderme
+        io.to(roomId).emit("updateOrderStatus", {
           orderId: order.id,
           status: "completed",
-          room: roomId,
+        });
+
+        // İkinci odaya mesaj gönderme
+        io.to("room2").emit("updateOrderStatus", {
+          orderId: order.id,
+          status: "completed",
         });
       }
 
