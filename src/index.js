@@ -8,15 +8,17 @@ const httpServer = http.createServer(app);
 const io = startSocketServer(httpServer);
 const dotenv = require("dotenv");
 const cors = require("cors");
-
-app.use(cors({
-  origin: 'http://localhost:3000',
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+const stripe = require("stripe")(process.env.STRIPE_SECRET_TEST);
+app.use(
+  cors({
+    origin: "http://localhost:3000",
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
 dotenv.config();
-
+console.log(process.env.EMAIL_USER);
 const startConsumer = async () => {
   try {
     const connection = await amqp.connect("amqp://localhost");
@@ -33,6 +35,7 @@ const startConsumer = async () => {
       const orderData = JSON.parse(msg.content.toString());
       console.log("Sipariş alındı ve işleniyor.");
       // Siparişi işle
+      console.log("payment_id payment_idpayment_idpayment_id, ", orderData);
       processOrder(orderData, io);
 
       // Mesajı işlendik olarak işaretle

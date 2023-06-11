@@ -1,17 +1,15 @@
 const db = require("./db");
-
+require("dotenv").config();
+const stripe = require("stripe")(process.env.STRIPE_SECRET_TEST);
 const processOrder = async (orderData, io) => {
-  // Sipariş verilerini al
-  const { userId } = orderData;
-  console.log("HOŞGELDİNİZ DATALAR ", userId);
-
-  // Stok kontrolü yap
-  let amount = 0;
-  const cartItems = await getCartItemsByUserId(userId);
-  await performStockCheck(cartItems, io, userId);
-  // Sipariş bildirimini gönder
+  try {
+    const { userId, payment_id } = orderData;
+    const cartItems = await getCartItemsByUserId(userId);
+    await performStockCheck(cartItems, io, userId, payment_id);
+  } catch (err) {
+    console.log(err);
+  }
 };
-
 async function getCartItemsByUserId(userId) {
   try {
     const query = "SELECT id FROM carts WHERE user_id = $1";
@@ -29,17 +27,14 @@ async function getCartItemsByUserId(userId) {
     throw error;
   }
 }
-
-async function performStockCheck(cartItems, io, userId) {
+async function performStockCheck(cartItems, io, userId, payment_id) {
   try {
-    let total_amount = 0;
-
-    const orderId = createOrder(userId, 0);
+    const orderId = await createOrder(userId, 0);
 
     for (const cartItem of cartItems) {
       const productId = cartItem.product_id;
       const quantity = cartItem.quantity;
-      const amountWithCount = 0;
+      let amountWithCount = 0;
       // Stok kontrolü yapmak için ilgili sorguyu kullanabilirsiniz
       const query =
         "SELECT stock, price FROM sellers_products_join WHERE product_id = $1";
@@ -47,25 +42,33 @@ async function performStockCheck(cartItems, io, userId) {
 
       const stock = result.rows[0].stock;
       const price = result.rows[0].price;
+      console.log("PRİCE ", cartItem.quantity);
       console.log(`Ürün ID: ${productId}, Adet: ${quantity}, Stok: ${stock}`);
 
       // Stok kontrolü yapma işlemlerini buraya ekleyebilirsiniz
       if (quantity > stock) {
         console.log("Stok yetersiz!");
       } else {
-        // cartItem seller_id yi kullanarak notifications tablosuna ekle
+        console.log(
+          "kontrol 23232 ",
+          orderId,
+          cartItem.product_id,
+          cartItem.quantity,
+          price,
+          cartItem.seller_id
+        );
 
         amountWithCount = price * cartItem.quantity;
 
-        await addNotification(
-          cartItem.seller_id,
-          orderId,
-          userId,
-          "Yeni sipariş alındı!"
-        );
-        // Order tablosunu güncelle
+        // await addNotification(
+        //   cartItem.seller_id,
+        //   orderId,
+        //   userId,
+        //   "Yeni sipariş alındı!"
+        // );
+
         await addToOrderTotalAmount(orderId, amountWithCount);
-        // Order_detaile ekle
+
         await addOrderDetail(
           orderId,
           cartItem.product_id,
@@ -78,13 +81,14 @@ async function performStockCheck(cartItems, io, userId) {
         });
         console.log("Stok yeterli.");
       }
+
+      await payment(payment_id, io, userId, orderId);
     }
   } catch (error) {
     console.error("Hata oluştu:", error);
     throw error;
   }
 }
-
 async function addNotification(sellerId, orderId, userId, content) {
   try {
     const query = `
@@ -121,7 +125,6 @@ async function createOrder(userId, totalAmount) {
     throw error;
   }
 }
-
 async function addToOrderTotalAmount(orderId, amountWithCount) {
   try {
     const query = `
@@ -140,7 +143,6 @@ async function addToOrderTotalAmount(orderId, amountWithCount) {
     throw error;
   }
 }
-
 async function addOrderDetail(
   orderId,
   productId,
@@ -164,5 +166,62 @@ async function addOrderDetail(
     throw error;
   }
 }
+async function payment(payment_id, io, userId, orderId) {
+  try {
+    const total_amount = await getTotalAmountByOrderId(orderId);
+
+    const payment = await stripe.paymentIntents.create({
+      amount: total_amount * 100,
+      currency: "USD",
+      description: "Ödeme denemesi",
+      payment_method: payment_id,
+      confirm: true,
+    });
+    io.to(userId).emit("updateOrderStatus", {
+      status: "Sipariş verme işlemi başarılı!",
+    });
+  } catch (err) {
+    console.log("ERROR ", err);
+    io.to(userId).emit("updateOrderStatus", {
+      status: "Sipariş verme işlemi başarısız.",
+    });
+    deleteOrder(orderId);
+    return; // Hata durumunda fonksiyondan çık
+  }
+}
+const deleteOrder = async (orderId) => {
+  try {
+    // Order'ı silme
+    const deleteOrderQuery = "DELETE FROM orders WHERE id = $1";
+    await db.query(deleteOrderQuery, [orderId]);
+
+    // İlişkili order_details satırlarını silme
+    const deleteOrderDetailsQuery =
+      "DELETE FROM order_details WHERE order_id = $1";
+    await db.query(deleteOrderDetailsQuery, [orderId]);
+
+    console.log("Sipariş ve ilişkili detaylar başarıyla silindi.");
+  } catch (error) {
+    console.error("Sipariş silinirken hata oluştu:", error);
+    throw error;
+  }
+};
+const getTotalAmountByOrderId = async (orderId) => {
+  try {
+    console.log("NEDNEDNENDENDENDNEN ", orderId);
+    const query = "SELECT total_amount FROM orders WHERE id = $1";
+    const result = await db.query(query, [orderId]);
+
+    if (result.rows.length > 0) {
+      const totalAmount = result.rows[0].total_amount;
+      return totalAmount;
+    } else {
+      throw new Error("Belirtilen sipariş bulunamadı.");
+    }
+  } catch (error) {
+    console.error("Siparişin toplam tutarı alınırken hata oluştu:", error);
+    throw error;
+  }
+};
 
 module.exports = processOrder;
