@@ -3,9 +3,49 @@ require("dotenv").config();
 const stripe = require("stripe")(process.env.STRIPE_SECRET_TEST);
 const processOrder = async (orderData, io) => {
   try {
+    let inStock = [];
+    let notInStock = [];
     const { userId, payment_id } = orderData;
     const cartItems = await getCartItemsByUserId(userId);
-    await performStockCheck(cartItems, io, userId, payment_id);
+    await performStockCheck(
+      cartItems,
+      io,
+      userId,
+      payment_id,
+      inStock,
+      notInStock
+    );
+    const total_amount = await calculateCartItemsTotalPrice(inStock);
+    updateStock(inStock);
+    const paymentResult = await payment(
+      payment_id,
+      io,
+      userId,
+      total_amount,
+      inStock
+    );
+    if (paymentResult == true) {
+      const order_id = await createOrder(userId, total_amount);
+      for (const item of inStock) {
+        console.log("ITEM ", item);
+        const { seller_id, product_id, quantity } = item;
+        console.log("PRODUCT_ID ", product_id);
+        const unit_price = await getProductPrice(seller_id, product_id);
+        await addOrderDetail(
+          order_id,
+          product_id,
+          quantity,
+          unit_price,
+          seller_id
+        );
+        sendNotificationToSeller(
+          seller_id,
+          product_id,
+          "Yeni bir sipariş aldınız"
+        );
+      }
+    }
+    sendNotificationToUserIfNotInStock(notInStock);
   } catch (err) {
     console.log(err);
   }
@@ -15,19 +55,24 @@ async function getCartItemsByUserId(userId) {
     const query = "SELECT id FROM carts WHERE user_id = $1";
     const result = await db.query(query, [userId]);
     const cartId = result.rows[0].id;
-    console.log("cartId ", cartId);
 
     const cartItemsQuery = "SELECT * FROM cart_items WHERE cart_id = $1";
     const cartItemsResult = await db.query(cartItemsQuery, [cartId]);
     const cartItems = cartItemsResult.rows;
-    console.log(cartItems);
     return cartItems;
   } catch (error) {
     console.error("Hata oluştu:", error);
     throw error;
   }
 }
-async function performStockCheck(cartItems, io, userId, payment_id) {
+async function performStockCheck(
+  cartItems,
+  io,
+  userId,
+  payment_id,
+  inStock,
+  notInStock
+) {
   try {
     const orderId = await createOrder(userId, 0);
 
@@ -47,48 +92,19 @@ async function performStockCheck(cartItems, io, userId, payment_id) {
 
       // Stok kontrolü yapma işlemlerini buraya ekleyebilirsiniz
       if (quantity > stock) {
-        console.log("Stok yetersiz!");
+        notInStock.push(cartItem);
+        console.log("IN STOCK ARRAY ", inStock);
       } else {
-        console.log(
-          "kontrol 23232 ",
-          orderId,
-          cartItem.product_id,
-          cartItem.quantity,
-          price,
-          cartItem.seller_id
-        );
-
-        amountWithCount = price * cartItem.quantity;
-
-        // await addNotification(
-        //   cartItem.seller_id,
-        //   orderId,
-        //   userId,
-        //   "Yeni sipariş alındı!"
-        // );
-
-        await addToOrderTotalAmount(orderId, amountWithCount);
-
-        await addOrderDetail(
-          orderId,
-          cartItem.product_id,
-          cartItem.quantity,
-          price,
-          cartItem.seller_id
-        );
-        io.to(userId).emit("updateOrderStatus", {
-          status: "Yeni bir sipariş aldınız!",
-        });
-        console.log("Stok yeterli.");
+        inStock.push(cartItem);
+        console.log(inStock);
       }
-
-      await payment(payment_id, io, userId, orderId);
     }
   } catch (error) {
     console.error("Hata oluştu:", error);
     throw error;
   }
 }
+
 async function addNotification(sellerId, orderId, userId, content) {
   try {
     const query = `
@@ -166,10 +182,8 @@ async function addOrderDetail(
     throw error;
   }
 }
-async function payment(payment_id, io, userId, orderId) {
+async function payment(payment_id, io, userId, total_amount, inStock) {
   try {
-    const total_amount = await getTotalAmountByOrderId(orderId);
-
     const payment = await stripe.paymentIntents.create({
       amount: total_amount * 100,
       currency: "USD",
@@ -177,16 +191,18 @@ async function payment(payment_id, io, userId, orderId) {
       payment_method: payment_id,
       confirm: true,
     });
-    io.to(userId).emit("updateOrderStatus", {
-      status: "Sipariş verme işlemi başarılı!",
-    });
+    // io.to(userId).emit("updateOrderStatus", {
+    //   status: "Sipariş verme işlemi başarılı!",
+    // });
+    console.log("ÖDEME BAŞARIYLA YAPILDI");
+    return true;
   } catch (err) {
-    console.log("ERROR ", err);
+    updateStockReverse(inStock);
     io.to(userId).emit("updateOrderStatus", {
-      status: "Sipariş verme işlemi başarısız.",
+      status:
+        "Ödeme alınırken bir hata meydana geldi. Sipariş verme işlemi başarısız.",
     });
-    deleteOrder(orderId);
-    return; // Hata durumunda fonksiyondan çık
+    return false; // Hata durumunda fonksiyondan çık
   }
 }
 const deleteOrder = async (orderId) => {
@@ -221,6 +237,127 @@ const getTotalAmountByOrderId = async (orderId) => {
   } catch (error) {
     console.error("Siparişin toplam tutarı alınırken hata oluştu:", error);
     throw error;
+  }
+};
+const calculateCartItemsTotalPrice = async (cartItems) => {
+  try {
+    let totalAmount = 0;
+
+    for (const cartItem of cartItems) {
+      const { product_id, seller_id, quantity } = cartItem;
+
+      // Seller ve ürün bilgilerini sellers_products_join tablosundan al
+      const query = `
+        SELECT price
+        FROM sellers_products_join
+        WHERE seller_id = $1 AND product_id = $2;
+      `;
+      const values = [seller_id, product_id];
+      const result = await db.query(query, values);
+
+      if (result.rows.length > 0) {
+        const price = result.rows[0].price;
+        const itemTotalPrice = price * quantity;
+        totalAmount += itemTotalPrice;
+      }
+    }
+
+    // Sonuçları döndür
+    return totalAmount;
+  } catch (error) {
+    console.error("Hata:", error);
+  }
+};
+const updateStock = async (inStock) => {
+  try {
+    for (const item of inStock) {
+      const { product_id, quantity } = item;
+
+      // Ürün stok güncellemesini yap
+      const query = `
+        UPDATE sellers_products_join
+        SET stock = stock - $1
+        WHERE product_id = $2
+      `;
+      const values = [quantity, product_id];
+      await db.query(query, values);
+    }
+    console.log("Stocks updated successfully");
+  } catch (err) {
+    console.error("Error updating stocks:", err);
+  }
+};
+const updateStockReverse = async (inStock) => {
+  try {
+    for (const item of inStock) {
+      const { product_id, quantity } = item;
+
+      // Ürün stok güncellemesini yap
+      const query = `
+        UPDATE sellers_products_join
+        SET stock = stock + $1
+        WHERE product_id = $2
+      `;
+      const values = [quantity, product_id];
+      await db.query(query, values);
+    }
+    console.log("Stocks updated successfully");
+  } catch (err) {
+    console.error("Error updating stocks:", err);
+  }
+};
+const sendNotificationToUserIfNotInStock = async (notInStock) => {
+  try {
+    for (const item of notInStock) {
+      const { cart_id } = item;
+
+      // Kullanıcıya bildirim gönder
+      const query = `
+        INSERT INTO user_notifications (notification_type, order_id, user_id, content)
+        VALUES ('out_of_stock', NULL, (SELECT user_id FROM carts WHERE id = $1), 'Product is out of stock')
+      `;
+      const values = [cart_id];
+      await db.query(query, values);
+    }
+    console.log("Notifications sent successfully");
+  } catch (err) {
+    console.error("Error sending notifications:", err);
+  }
+};
+const getProductPrice = async (sellerId, productId) => {
+  try {
+    const query = `
+      SELECT price
+      FROM sellers_products_join
+      WHERE seller_id = $1 AND product_id = $2
+    `;
+    const values = [sellerId, productId];
+
+    const result = await db.query(query, values);
+    const price = result.rows[0]?.price;
+
+    return price;
+  } catch (error) {
+    console.error("Hata oluştu:", error);
+    throw error;
+  }
+};
+const sendNotificationToSeller = async (sellerId, product_id, content) => {
+  try {
+    // Bildirim tablosuna veri ekleme
+    const query = `
+      INSERT INTO public.seller_notifications (seller_id, notification_type, product_id, content)
+      VALUES ($1, $2, $3, $4)
+    `;
+    const values = [sellerId, "order", product_id, content];
+    await db.query(query, values);
+
+    // Bildirim gönderme işlemleri buraya eklenebilir
+    // Örneğin, bir bildirim e-postası veya bildirim merkezi entegrasyonu yapılabilir
+
+    console.log("Seller notification sent successfully");
+  } catch (error) {
+    console.error("Error sending seller notification:", error);
   }
 };
 
