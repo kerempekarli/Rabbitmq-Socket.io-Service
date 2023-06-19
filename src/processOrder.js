@@ -26,6 +26,13 @@ const processOrder = async (orderData, io) => {
     );
     if (paymentResult == true) {
       const order_id = await createOrder(userId, total_amount);
+      addUserNotification(
+        userId,
+        "order",
+        order_id,
+        "Order successfully created"
+      );
+
       for (const item of inStock) {
         console.log("ITEM ", item);
         const { seller_id, product_id, quantity } = item;
@@ -358,6 +365,26 @@ const sendNotificationToSeller = async (sellerId, product_id, content) => {
     console.log("Seller notification sent successfully");
   } catch (error) {
     console.error("Error sending seller notification:", error);
+  }
+};
+const addUserNotification = async (
+  userId,
+  notificationType,
+  orderId,
+  content
+) => {
+  try {
+    const query = `
+      INSERT INTO public.user_notifications (notification_type, order_id, user_id, content)
+      VALUES ($1, $2, $3, $4)
+      RETURNING id;
+    `;
+    const values = [notificationType, orderId, userId, content];
+    const result = await db.query(query, values);
+    const notificationId = result.rows[0].id;
+    console.log(`User notification added with ID: ${notificationId}`);
+  } catch (error) {
+    console.error("Error adding user notification:", error);
   }
 };
 
