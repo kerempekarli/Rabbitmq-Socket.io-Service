@@ -35,7 +35,6 @@ const startConsumer = async () => {
       const orderData = JSON.parse(msg.content.toString());
       console.log("Sipariş alındı ve işleniyor.");
       // Siparişi işle
-      console.log("payment_id payment_idpayment_idpayment_id, ", orderData);
       processOrder(orderData, io);
 
       // Mesajı işlendik olarak işaretle

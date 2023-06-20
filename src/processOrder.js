@@ -30,7 +30,8 @@ const processOrder = async (orderData, io) => {
         userId,
         "order",
         order_id,
-        "Order successfully created"
+        "Order successfully created",
+        io
       );
 
       for (const item of inStock) {
@@ -111,7 +112,6 @@ async function performStockCheck(
     throw error;
   }
 }
-
 async function addNotification(sellerId, orderId, userId, content) {
   try {
     const query = `
@@ -371,7 +371,8 @@ const addUserNotification = async (
   userId,
   notificationType,
   orderId,
-  content
+  content,
+  io
 ) => {
   try {
     const query = `
@@ -382,6 +383,7 @@ const addUserNotification = async (
     const values = [notificationType, orderId, userId, content];
     const result = await db.query(query, values);
     const notificationId = result.rows[0].id;
+    io.to(userId).emit("notification", { message: "sgsdgdsa" });
     console.log(`User notification added with ID: ${notificationId}`);
   } catch (error) {
     console.error("Error adding user notification:", error);
