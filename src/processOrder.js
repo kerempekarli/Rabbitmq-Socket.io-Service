@@ -175,10 +175,17 @@ async function addOrderDetail(
 ) {
   try {
     const query = `
-      INSERT INTO order_details (order_id, product_id, quantity, unit_price, seller_id)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO order_details (order_id, product_id, quantity, unit_price, seller_id, status)
+      VALUES ($1, $2, $3, $4, $5, $6)
     `;
-    const values = [orderId, productId, quantity, unitPrice, sellerId];
+    const values = [
+      orderId,
+      productId,
+      quantity,
+      unitPrice,
+      sellerId,
+      "pending",
+    ];
 
     await db.query(query, values);
     console.log('Yeni bir "order_details" kaydı eklendi.');
@@ -383,7 +390,7 @@ const addUserNotification = async (
     const values = [notificationType, orderId, userId, content];
     const result = await db.query(query, values);
     const notificationId = result.rows[0].id;
-    io.to(userId).emit("notification", { message: "sgsdgdsa" });
+    io.to(userId).emit("notification", { message: "Sipariş edildi bildirimi" });
     console.log(`User notification added with ID: ${notificationId}`);
   } catch (error) {
     console.error("Error adding user notification:", error);
